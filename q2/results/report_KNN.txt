@@ -1,0 +1,14 @@
+KNN  params={'n_neighbors': 15, 'weights': 'uniform', 'metric': 'cosine'}
+
+              precision    recall  f1-score   support
+
+       Anger      0.437     0.816     0.569       196
+     Disgust      0.301     0.189     0.232       196
+        Fear      0.354     0.316     0.334       196
+       Happy      0.421     0.260     0.322       196
+     Neutral      0.531     0.256     0.345       168
+         Sad      0.408     0.587     0.481       196
+
+    accuracy                          0.408      1148
+   macro avg      0.409     0.404     0.381      1148
+weighted avg      0.406     0.408     0.382      1148
