@@ -1,0 +1,29 @@
+# large datasets - download instructions in README.md
+q2/dataset_repo/
+q3/data/
+*.zip
+
+# caches / generated
+*/cache/
+q3/predictions/
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+
+# Q1 archive also contains an unrelated regression dataset
+q1/data/data_*.csv
+
+# course handout files (not ours to redistribute)
+cep_ml.pdf
+ML CEP Rubric.pdf
+
+# logs
+*_log.txt
+
+# LaTeX build files
+*.aux
+*.log
+*.toc
+*.lof
+*.lot
+*.out

@@ -1,0 +1,16 @@
+feature_group,n_features,test_acc
+fft,16,0.3833
+mfcc,80,0.4895
+mel,80,0.4564
+chroma,24,0.351
+spectral,22,0.419
+prosody,12,0.4486
+bicoherence,8,0.2892
+ALL,242,0.5244
+ALL minus fft,226,0.5253
+ALL minus mfcc,162,0.5035
+ALL minus mel,162,0.527
+ALL minus chroma,218,0.5253
+ALL minus spectral,220,0.52
+ALL minus prosody,230,0.5148
+ALL minus bicoherence,234,0.5244

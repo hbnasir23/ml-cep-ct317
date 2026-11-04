@@ -1,0 +1,14 @@
+Neural Network  params={'hidden_layer_sizes': (128,), 'alpha': 0.1}
+
+              precision    recall  f1-score   support
+
+       Anger      0.588     0.679     0.630       196
+     Disgust      0.474     0.423     0.447       196
+        Fear      0.455     0.515     0.483       196
+       Happy      0.438     0.505     0.469       196
+     Neutral      0.621     0.488     0.547       168
+         Sad      0.545     0.464     0.501       196
+
+    accuracy                          0.513      1148
+   macro avg      0.520     0.512     0.513      1148
+weighted avg      0.518     0.513     0.512      1148
