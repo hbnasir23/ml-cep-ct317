@@ -1,21 +1,20 @@
 """
-Interactive demo of all three CEP solutions - test the trained models with
-your own input and see WHY they decide what they decide.
+Voice Sentiment & Emotion Recognition - interactive demo.
 
     streamlit run app.py
 
-Q1  type headlines            -> real/fake + the k nearest training headlines
-Q2  record / upload / pick     -> emotion + probabilities + what the filter removed
-Q3  upload / pick an image     -> class + bounding box + every scored candidate region
+Record your own voice (or upload / pick a clip), and the app predicts the
+SENTIMENT (positive / neutral / negative) and the EMOTION (anger, disgust,
+fear, happy, neutral, sad), shows how confident it is, what the noise filter
+removed, and warns when the recording itself is the problem.
 
-Requires the trained models in q*/models/ (included in the repository).
+Model: 4 kHz low-pass filter -> WavLM-base-plus embeddings -> scikit-learn
+classifier trained on CREMA-D + RAVDESS (see README.md / report).
 """
 import os
 import sys
 import tempfile
 
-import cv2
-import joblib
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -24,213 +23,209 @@ import pandas as pd
 import streamlit as st
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
-for sub in ("q2", "q3"):
-    sys.path.insert(0, os.path.join(ROOT, sub))
+Q2 = os.path.join(ROOT, "q2")
+sys.path.insert(0, Q2)
 
-st.set_page_config(page_title="ML CEP demo", layout="wide")
-st.title("ML Complex Engineering Problem - live demo")
-st.caption("CT-317 Machine Learning | Sumayyah Mohammedy, Amna Khan, Mariha Mahmood, "
+st.set_page_config(page_title="Voice Sentiment Recognition", layout="wide")
+st.title("Voice Sentiment & Emotion Recognition")
+st.caption("CT-317 Machine Learning CEP | Sumayyah Mohammedy, Amna Khan, Mariha Mahmood, "
            "Haris Bin Nasir")
-tab1, tab2, tab3 = st.tabs(["Q1 Fake-news headlines (KNN)",
-                            "Q2 Emotion from audio",
-                            "Q3 Paper defect detection"])
+
+MODEL_PATH = os.path.join(Q2, "models", "wavlm_emotion.joblib")
+if not os.path.exists(MODEL_PATH):
+    st.error("Model not found. Run `python q2/q2_wavlm_emotion.py` first.")
+    st.stop()
+
+import audio_features as af   # noqa: E402
+import predict as pr          # noqa: E402
+
+SENT_COLOR = {"Positive": "#1a9850", "Neutral": "#7f7f7f", "Negative": "#d73027"}
+EMO_CODE = {"ANG": "Anger", "DIS": "Disgust", "FEA": "Fear", "HAP": "Happy",
+            "NEU": "Neutral", "SAD": "Sad"}
+RAV_CODE = {"01": "Neutral", "03": "Happy", "04": "Sad", "05": "Anger", "06": "Fear",
+            "07": "Disgust"}
 
 
-def missing(path, script):
-    st.warning(f"Model `{os.path.relpath(path, ROOT)}` not found. Run `python {script}` first.")
+@st.cache_resource(show_spinner="Loading the WavLM model (first time downloads ~380 MB)...")
+def load():
+    b = pr.load_model(MODEL_PATH)
+    import ssl_features
+    ssl_features._load()
+    return b
 
 
-def results_image(path, caption):
-    if os.path.exists(path):
-        st.image(path, caption=caption, width="stretch")
+bundle = load()
+for key, default in (("history", []), ("examples", []), ("personal", None), ("last_x", None)):
+    if key not in st.session_state:
+        st.session_state[key] = default
 
 
-def save_upload(data, suffix):
-    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
-    tmp.write(data)
-    tmp.close()
-    return tmp.name
+def active_model():
+    if st.session_state.personal is not None and st.session_state.get("use_personal", True):
+        return st.session_state.personal
+    return None
 
+with st.sidebar:
+    st.header("How it works")
+    st.markdown(
+        "1. **Low-pass filter** at 4 kHz removes high-frequency noise\n"
+        "2. **WavLM** (pretrained on 94k hours of speech) turns the voice into a "
+        "768-number description\n"
+        f"3. A **{bundle['model_name']}** classifier predicts 6 emotions; their "
+        "probabilities are summed into 3 sentiments\n\n"
+        "**Tips for your own recordings**: speak one full sentence (2-4 s), "
+        "act the emotion clearly, keep the microphone at a normal distance.")
+    st.markdown("**Sentiment mapping**  \nPositive = Happy  \nNeutral = Neutral  \n"
+                "Negative = Anger, Disgust, Fear, Sad")
 
-@st.cache_resource
-def load_bundle(path):
-    return joblib.load(path)
+modes = ["Record with microphone", "Upload a WAV file"]
+crema_dir = os.path.join(Q2, "dataset_repo", "NoiseAudioWAV")
+rav_dir = os.path.join(Q2, "ravdess")
+split_csv = os.path.join(Q2, "results", "split.csv")
+if os.path.isdir(crema_dir) and os.path.exists(split_csv):
+    modes.append("CREMA-D clip (unseen test speakers)")
+if os.path.isdir(rav_dir):
+    modes.append("RAVDESS clip (other corpus)")
+mode = st.radio("Input", modes, horizontal=True)
 
+wav, true, src = None, None, None
+if mode == modes[0]:
+    rec = st.audio_input("Press the microphone, say one sentence with an emotion, press stop")
+    if rec is not None:
+        tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".wav")
+        tmp.write(rec.getvalue())
+        tmp.close()
+        wav, src = tmp.name, "microphone"
+elif mode == modes[1]:
+    up = st.file_uploader("WAV file", type=["wav"])
+    if up is not None:
+        tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".wav")
+        tmp.write(up.read())
+        tmp.close()
+        wav, src = tmp.name, up.name
+elif mode.startswith("CREMA"):
+    files = pd.read_csv(split_csv).query("split == 'test'").file.tolist()
+    choice = st.selectbox("Clip", files[::5])
+    wav, src = os.path.join(crema_dir, choice), choice
+    true = EMO_CODE[choice.split("_")[2]]
+else:
+    files = sorted(os.path.join(r, f) for r, _, fs in os.walk(rav_dir) for f in fs
+                   if f.endswith(".wav") and f.split("-")[2] in RAV_CODE)
+    choice = st.selectbox("Clip (actor = last number)", [os.path.basename(f) for f in files][::4])
+    wav = next(f for f in files if f.endswith(choice))
+    src, true = choice, RAV_CODE[choice.split("-")[2]]
 
-# ------------------------------------------------------------------ Q1 ----
-with tab1:
-    path = os.path.join(ROOT, "q1", "models", "knn_cosine.joblib")
-    if not os.path.exists(path):
-        missing(path, "q1/q1_knn.py")
-    else:
-        b = load_bundle(path)
-        model, vec = b["model"], b["vectorizer"]
-        st.write(f"KNN with **cosine** distance, k = {b['best_k']}, bag-of-words "
-                 f"(CountVectorizer, {len(vec.vocabulary_)} words). Test accuracy 75.7%.")
-        text = st.text_area("Headline(s), one per line",
-                            "trump says he will build a wall on the border\n"
-                            "hillary clinton is going to jail say insiders")
-        lines = [t.strip().lower() for t in text.splitlines() if t.strip()]
-        if lines:
-            X = vec.transform(lines)
-            proba = model.predict_proba(X)
-            known = np.asarray((X > 0).sum(axis=1)).ravel()
-            st.dataframe(pd.DataFrame({
-                "headline": lines,
-                "prediction": [b["labels"][int(c)] for c in model.predict(X)],
-                "P(real)": proba[:, list(model.classes_).index(1)].round(2),
-                "words known to the model": known}), width="stretch")
-            if "train_headlines" in b:
-                pick = st.selectbox("Explain a prediction: show its nearest training headlines",
-                                    lines)
-                xi = vec.transform([pick])
-                if xi.nnz == 0:
-                    st.info("None of these words are in the vocabulary - the prediction is "
-                            "just the majority vote of arbitrary neighbours.")
-                dist, idx = model.kneighbors(xi, n_neighbors=b["best_k"])
-                st.dataframe(pd.DataFrame({
-                    "cosine distance": dist[0].round(3),
-                    "training headline": [b["train_headlines"][i] for i in idx[0]],
-                    "label": [b["labels"][int(b["train_labels"][i])] for i in idx[0]]}),
-                    width="stretch")
-        c1, c2 = st.columns(2)
-        with c1:
-            results_image(os.path.join(ROOT, "q1", "results", "knn_euclidean.png"), "Euclidean")
-        with c2:
-            results_image(os.path.join(ROOT, "q1", "results", "knn_cosine.png"), "Cosine")
+if wav:
+    if mode != modes[0]:
+        st.audio(wav)
+    with st.spinner("Analysing..."):
+        raw, x = pr.embed(wav, bundle)
+        emo, sent = pr.predict_vector(x, bundle, active_model())
+    st.session_state.last_x = x
+    if active_model() is not None:
+        st.success(f"Using your personalised model ({len(st.session_state.examples)} of your "
+                   "own examples).")
+    e_pred = max(emo, key=emo.get)
+    s_pred = max(sent, key=sent.get)
+    issues = pr.check_quality(raw)
 
-# ------------------------------------------------------------------ Q2 ----
-EMO = {"ANG": "Anger", "DIS": "Disgust", "FEA": "Fear", "HAP": "Happy",
-       "NEU": "Neutral", "SAD": "Sad"}
-
-with tab2:
-    path = os.path.join(ROOT, "q2", "models", "best_model.joblib")
-    if not os.path.exists(path):
-        missing(path, "q2/q2_audio_sentiment.py")
-    else:
-        import audio_features as af
+    c1, c2, c3 = st.columns([1.1, 1, 1.4])
+    with c1:
+        st.markdown(f"<div style='font-size:15px'>Sentiment</div>"
+                    f"<div style='font-size:40px;font-weight:700;color:{SENT_COLOR[s_pred]}'>"
+                    f"{s_pred}</div><div style='font-size:15px'>confidence {sent[s_pred]:.0%}</div>",
+                    unsafe_allow_html=True)
+        st.markdown(f"<div style='font-size:15px;margin-top:18px'>Emotion</div>"
+                    f"<div style='font-size:32px;font-weight:700'>{e_pred}</div>"
+                    f"<div style='font-size:15px'>confidence {emo[e_pred]:.0%}</div>",
+                    unsafe_allow_html=True)
+        if true:
+            ok_e = true == e_pred
+            ok_s = bundle["sentiments"][bundle["sentiment_of"][bundle["emotions"].index(true)]] == s_pred
+            st.write(f"True emotion: **{true}** - emotion {'correct' if ok_e else 'wrong'}, "
+                     f"sentiment {'correct' if ok_s else 'wrong'}")
+        if max(emo.values()) < 0.4:
+            st.info("Low confidence: the voice does not clearly match one emotion.")
+        for i in issues:
+            st.warning(i)
+    with c2:
+        st.caption("Sentiment probabilities")
+        st.bar_chart(pd.Series(sent), height=180)
+        st.caption("Emotion probabilities")
+        st.bar_chart(pd.Series(emo), height=200)
+    with c3:
         import librosa
         import librosa.display
-        b = load_bundle(path)
-        st.write(f"Model: **{b['model_name']}**, low-pass {b['lowpass_hz']} Hz, "
-                 f"features: {', '.join(b['feature_groups'])}. "
-                 f"Trained and tested on *different speakers*.")
-        sample_dir = os.path.join(ROOT, "q2", "dataset_repo", "NoiseAudioWAV")
-        have_data = os.path.isdir(sample_dir)
-        modes = ["Record with microphone", "Upload a WAV file"] + \
-                (["Pick a clip from the test speakers"] if have_data else [])
-        mode = st.radio("Input", modes, horizontal=True)
-        wav, true = None, None
-        if mode == modes[0]:
-            rec = st.audio_input("Say a sentence with an emotion (e.g. angry, happy, sad)")
-            if rec is not None:
-                wav = save_upload(rec.getvalue(), ".wav")
-        elif mode == modes[1]:
-            up = st.file_uploader("WAV clip", type=["wav"], key="wav")
-            if up is not None:
-                wav = save_upload(up.read(), ".wav")
-        else:
-            split = pd.read_csv(os.path.join(ROOT, "q2", "results", "split.csv"))
-            choice = st.selectbox("Test clip", split.query("split == 'test'").file.tolist()[::7])
-            wav = os.path.join(sample_dir, choice)
-            true = EMO[choice.split("_")[2]]
-        if wav:
-            if mode != modes[0]:
-                st.audio(wav)
-            x = af.features_from_file(wav, cutoff=b["lowpass_hz"])[None, :]
-            model = b["model"]
-            pred = b["labels"][int(model.predict(x)[0])]
-            c1, c2 = st.columns([1, 1])
-            with c1:
-                st.subheader(f"Predicted emotion: {pred}")
-                if true:
-                    st.write(f"True label: **{true}** "
-                             f"{'(correct)' if true == pred else '(wrong)'}")
-                p = model.predict_proba(x)[0]
-                st.bar_chart(pd.Series(p, index=[b["labels"][int(c)] for c in model.classes_]))
-            with c2:
-                y, sr = librosa.load(wav, sr=af.SR)
-                yf = af.lowpass_filter(y, sr, b["lowpass_hz"])
-                fig, ax = plt.subplots(2, 1, figsize=(6, 4.6), sharex=True)
-                for a, sig, t in zip(ax, (y, yf), ("input", f"after {b['lowpass_hz']} Hz low-pass")):
-                    D = librosa.amplitude_to_db(np.abs(librosa.stft(sig, n_fft=512, hop_length=160)),
-                                                ref=np.max)
-                    librosa.display.specshow(D, sr=sr, hop_length=160, x_axis="time",
-                                             y_axis="hz", ax=a)
-                    a.set_title(t, fontsize=9)
-                fig.tight_layout()
-                st.pyplot(fig)
-                plt.close(fig)
-        with st.expander("Model comparison on unseen speakers"):
-            results_image(os.path.join(ROOT, "q2", "results", "model_comparison.png"), "")
+        yf = af.lowpass_filter(raw, af.SR, bundle["lowpass_hz"])
+        fig, ax = plt.subplots(2, 1, figsize=(6, 4.6), sharex=True)
+        for a, sig, t in zip(ax, (raw, yf), ("your input", "after 4 kHz low-pass filter")):
+            D = librosa.amplitude_to_db(np.abs(librosa.stft(sig, n_fft=512, hop_length=160)),
+                                        ref=np.max)
+            librosa.display.specshow(D, sr=af.SR, hop_length=160, x_axis="time", y_axis="hz", ax=a)
+            a.set_title(t, fontsize=9)
+        fig.tight_layout()
+        st.pyplot(fig)
+        plt.close(fig)
 
-# ------------------------------------------------------------------ Q3 ----
-with tab3:
-    mp = os.path.join(ROOT, "q3", "models", "image_classifier.joblib")
-    if not os.path.exists(mp):
-        missing(mp, "q3/q3_defect_detection.py")
-    else:
-        import defect_features as dfx
-        from predict import load_models, predict_image
-        img_b, reg_b = load_models()
-        st.write(f"Decision: **{img_b.get('decision', 'single-candidate')}** "
-                 f"({reg_b['model_name']} region classifier scores every dark-region proposal).")
-        data_dir = os.path.join(ROOT, "q3", "data", "out")
-        have_data = os.path.isdir(data_dir)
-        modes = ["Upload an image"] + (["Pick a test image"] if have_data else [])
-        mode = st.radio("Input", modes, horizontal=True, key="q3mode")
-        img_path, true = None, None
-        if mode == modes[0]:
-            up = st.file_uploader("Paper image", type=["jpg", "jpeg", "png"], key="img")
-            if up is not None:
-                img_path = save_upload(up.read(), os.path.splitext(up.name)[1])
-        else:
-            split = pd.read_csv(os.path.join(ROOT, "q3", "results", "split.csv"))
-            choice = st.selectbox("Test image", split.query("split == 'test'").file.tolist())
-            img_path = os.path.join(data_dir, choice)
-            true = choice.split("/")[0]
-        if img_path:
-            cls, probs, box, img = predict_image(img_path, img_b, reg_b)
-            c1, c2 = st.columns([3, 2])
-            with c1:
-                st.image(cv2.cvtColor(cv2.resize(img, (800, 800)), cv2.COLOR_BGR2RGB),
-                         caption=f"prediction: {cls}")
-            with c2:
-                st.subheader(f"Prediction: {cls}")
-                if true:
-                    st.write(f"True class: **{true}** {'(correct)' if true == cls else '(wrong)'}")
-                st.bar_chart(pd.Series(probs))
-                if box:
-                    x0, y0, x1, y1 = box
-                    st.write(f"Bounding box (x0, y0, x1, y1) in pixels: {box}")
-                    cx, cy = (x0 + x1) // 2, (y0 + y1) // 2
-                    h = max(150, int(0.9 * max(x1 - x0, y1 - y0)))
-                    crop = img[max(0, cy - h):cy + h, max(0, cx - h):cx + h]
-                    st.image(cv2.cvtColor(crop, cv2.COLOR_BGR2RGB), caption="zoom on the defect")
-            with st.expander("How the model sees this image (pre-processing and proposals)",
-                             expanded=False):
-                Xp, cands, scale = dfx.proposal_features(img_path, reg_b.get("k", 5))
-                P = reg_b["model"].predict_proba(Xp)
-                s, z, _ = dfx.preprocess(dfx.load_gray(img_path))
-                fig, ax = plt.subplots(1, 2, figsize=(10, 5))
-                ax[0].imshow(s, cmap="gray")
-                ax[0].set_title("grayscale input (1000 px)")
-                ax[1].imshow(np.clip(z, -30, 10), cmap="magma")
-                ax[1].set_title("illumination-flattened z-map + proposals")
-                for r, c in enumerate(cands):
-                    x, y, w, h = c["bbox"]
-                    ax[1].add_patch(plt.Rectangle((x - 4, y - 4), w + 8, h + 8, fill=False,
-                                                  color="cyan" if r else "lime", lw=1.5))
-                    ax[1].text(x, y - 8, f"#{r + 1}", color="white", fontsize=8)
-                for a in ax:
-                    a.axis("off")
-                fig.tight_layout()
-                st.pyplot(fig)
-                plt.close(fig)
-                st.dataframe(pd.DataFrame({
-                    "proposal": [f"#{i + 1}" for i in range(len(cands))],
-                    "darkness score": [round(c["score"]) for c in cands],
-                    "min z": [round(c["min_z"], 1) for c in cands],
-                    "area (px)": [c["area"] for c in cands],
-                    "P(paper)": P[:, 0].round(3), "P(hole)": P[:, 1].round(3),
-                    "P(penMark)": P[:, 2].round(3)}), width="stretch")
+    entry = {"input": src, "sentiment": s_pred, "P(sent)": round(sent[s_pred], 2),
+             "emotion": e_pred, "P(emotion)": round(emo[e_pred], 2), "true": true or "-",
+             "model": "personalised" if active_model() is not None else "base"}
+    if not st.session_state.history or st.session_state.history[-1] != entry:
+        st.session_state.history.append(entry)
+
+    # feedback loop: label this clip and keep it as a personal training example
+    fc1, fc2 = st.columns([2, 1])
+    with fc1:
+        correct = st.selectbox("What emotion did you actually express? (adds this clip as a "
+                               "training example of your voice)", bundle["emotions"],
+                               index=bundle["emotions"].index(true or e_pred))
+    with fc2:
+        st.write("")
+        st.write("")
+        if st.button("Add as my example"):
+            st.session_state.examples.append((x, bundle["emotions"].index(correct), src))
+            st.toast(f"Added a '{correct}' example ({len(st.session_state.examples)} total)")
+
+# ------------------------------------------------------- personalisation ---
+st.subheader("Teach the model your voice (few-shot personalisation)")
+st.markdown(
+    "A model trained on studio actors is less accurate on a new voice and microphone. "
+    "Record **2 examples of each emotion** (12 clips) with *Record with microphone* above and "
+    "press **Add as my example** after each, choosing the emotion you meant. Then press "
+    "**Personalise**. In our tests on 8 unseen speakers this raised emotion accuracy from "
+    "71% to 82% and sentiment accuracy from 84% to 90%.")
+ex = st.session_state.examples
+if ex:
+    counts = pd.Series([bundle["emotions"][e] for _, e, _ in ex]).value_counts()
+    st.dataframe(counts.reindex(bundle["emotions"], fill_value=0).rename("your examples").to_frame().T,
+                 width="stretch")
+p1, p2, p3 = st.columns(3)
+with p1:
+    if st.button("Personalise", disabled=len(ex) < 3):
+        with st.spinner("Retraining on the corpus + your examples..."):
+            st.session_state.personal = pr.personalised_model(
+                bundle, [v for v, _, _ in ex], [e for _, e, _ in ex])
+        st.rerun()
+with p2:
+    st.toggle("Use personalised model", value=True, key="use_personal",
+              disabled=st.session_state.personal is None)
+with p3:
+    if st.button("Reset to base model"):
+        st.session_state.personal = None
+        st.session_state.examples = []
+        st.rerun()
+
+if st.session_state.history:
+    st.subheader("Your session")
+    st.dataframe(pd.DataFrame(st.session_state.history[::-1]), width="stretch")
+    if st.button("Clear history"):
+        st.session_state.history = []
+        st.rerun()
+
+with st.expander("How good is the model? (results on data it never saw)"):
+    res = os.path.join(Q2, "results", "wavlm")
+    for f, cap in [("model_comparison.png", "Classifier comparison"),
+                   ("cm_sentiment.png", "Sentiment confusion matrix"),
+                   ("cm_emotion.png", "Emotion confusion matrix")]:
+        if os.path.exists(os.path.join(res, f)):
+            st.image(os.path.join(res, f), caption=cap)

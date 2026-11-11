@@ -1,9 +1,0 @@
-              precision    recall  f1-score   support
-
-       paper     1.0000    1.0000    1.0000        77
-        hole     0.9730    0.9863    0.9796        73
-     penMark     0.9865    0.9733    0.9799        75
-
-    accuracy                         0.9867       225
-   macro avg     0.9865    0.9865    0.9865       225
-weighted avg     0.9867    0.9867    0.9867       225

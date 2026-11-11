@@ -1,0 +1,26 @@
+Logistic Regression on layer 7
+
+6 emotions:
+              precision    recall  f1-score   support
+
+       Anger      0.682     0.832     0.749       196
+     Disgust      0.687     0.571     0.624       196
+        Fear      0.568     0.643     0.603       196
+       Happy      0.697     0.668     0.682       196
+     Neutral      0.861     0.851     0.856       168
+         Sad      0.682     0.592     0.634       196
+
+    accuracy                          0.689      1148
+   macro avg      0.696     0.693     0.691      1148
+weighted avg      0.692     0.689     0.687      1148
+
+Sentiment:
+              precision    recall  f1-score   support
+
+    Negative      0.878     0.940     0.908       784
+     Neutral      0.881     0.792     0.834       168
+    Positive      0.772     0.622     0.689       196
+
+    accuracy                          0.864      1148
+   macro avg      0.844     0.785     0.810      1148
+weighted avg      0.861     0.864     0.860      1148
