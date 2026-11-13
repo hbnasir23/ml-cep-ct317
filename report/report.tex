@@ -428,9 +428,22 @@ detector with hard negatives}. Instead of describing the whole image, the pipeli
 candidate objects (illumination flattening, robust z-score, morphology) and learns to reject
 static lens blemishes, and a single classifier performs both classification and localisation.
 
-% APP SCREENSHOTS (optional): add with
-% \begin{figure}[H]\centering\includegraphics[width=\textwidth]{app_screenshot.png}
-% \caption{The inspection application.}\end{figure}
+\begin{figure}[H]\centering
+\includegraphics[width=\textwidth]{q3_app_screenshot.jpg}
+\caption{The inspection application on a held-out test image: the pen mark is found,
+classified with 100\% confidence and boxed, with a zoom on the defect.}
+\label{fig:app}
+\end{figure}
+
+\section*{Online deployment}
+The application is also prepared for deployment on Streamlit Community Cloud straight from
+the public GitHub repository (\texttt{app.py} on branch \texttt{main}). The trained models
+(xz-compressed, 19\,MB in total) are stored in the repository. The library versions are
+pinned to the ones used for training so the saved models load identically. Because the
+1.6\,GB dataset cannot be hosted, 24 held-out test images (8 per class, downscaled to the
+1000\,px working resolution) are shipped in \texttt{q3/samples/}, so the online app can be
+tried without uploading anything. The model classifies all 24 of them correctly. When the
+full dataset is present locally, the app automatically offers all 225 test images instead.
 
 % ================================================================ software
 \chapter{Software Design and Usage}
