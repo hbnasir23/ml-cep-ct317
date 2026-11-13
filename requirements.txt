@@ -1,9 +1,10 @@
-scikit-learn>=1.8
-numpy>=2.0
-scipy>=1.14
-matplotlib>=3.9
-pandas>=2.2
+# versions pinned to the ones the saved models were trained with
+scikit-learn==1.8.0
+numpy==2.4.2
+scipy==1.17.1
+scikit-image==0.26.0
 joblib>=1.4
-opencv-python>=4.10
-scikit-image>=0.24
+pandas>=2.2
+matplotlib>=3.9
+opencv-python-headless>=4.10
 streamlit>=1.40

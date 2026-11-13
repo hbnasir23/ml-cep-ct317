@@ -38,6 +38,7 @@ from predict import load_models, predict_image      # noqa: E402
 
 DATA_DIR = os.path.join(Q3, "data", "out")
 SPLIT = os.path.join(Q3, "results", "split.csv")
+SAMPLES = os.path.join(Q3, "samples")     # 24 test images (1000 px) shipped for the online demo
 COLORS = {"paper": "#1a9850", "hole": "#d73027", "penMark": "#4575b4"}
 LABEL = {"paper": "No defect", "hole": "Hole", "penMark": "Pen mark"}
 
@@ -74,16 +75,22 @@ tab_one, tab_batch = st.tabs(["Single image", "Batch (many images)"])
 
 # ------------------------------------------------------------ single image
 with tab_one:
-    have_data = os.path.isdir(DATA_DIR) and os.path.exists(SPLIT)
-    modes = ["Upload an image"] + (["Pick a test image"] if have_data else [])
+    if os.path.isdir(DATA_DIR) and os.path.exists(SPLIT):
+        img_root = DATA_DIR
+        test = pd.read_csv(SPLIT).query("split == 'test'").file.tolist()
+    else:
+        img_root = SAMPLES
+        test = sorted(f"{c}/{f}" for c in ("paper", "hole", "penMark")
+                      if os.path.isdir(os.path.join(SAMPLES, c))
+                      for f in os.listdir(os.path.join(SAMPLES, c)))
+    modes = ["Pick a test image", "Upload an image"] if test else ["Upload an image"]
     mode = st.radio("Input", modes, horizontal=True)
     img_path, true = None, None
-    if mode == modes[0]:
+    if mode == "Upload an image":
         up = st.file_uploader("Paper image (JPG/PNG)", type=["jpg", "jpeg", "png"])
         if up is not None:
             img_path = save_upload(up.read(), os.path.splitext(up.name)[1])
     else:
-        test = pd.read_csv(SPLIT).query("split == 'test'").file.tolist()
         c1, c2 = st.columns([3, 1])
         with c2:
             st.write("")
@@ -91,7 +98,7 @@ with tab_one:
                 st.session_state.pick = test[np.random.randint(len(test))]
         with c1:
             choice = st.selectbox("Test image", test, key="pick")
-        img_path = os.path.join(DATA_DIR, choice)
+        img_path = os.path.join(img_root, choice)
         true = choice.split("/")[0]
 
     if img_path:
