@@ -8,8 +8,9 @@ SENTIMENT (positive / neutral / negative) and the EMOTION (anger, disgust,
 fear, happy, neutral, sad), shows how confident it is, what the noise filter
 removed, and warns when the recording itself is the problem.
 
-Model: 4 kHz low-pass filter -> WavLM-base-plus embeddings -> scikit-learn
-classifier trained on CREMA-D + RAVDESS (see README.md / report).
+Model: 4 kHz low-pass filter -> pretrained speech embeddings (the deployed
+feature set: WavLM / emotion2vec+ / both) -> scikit-learn classifier trained on
+CREMA-D + RAVDESS (see README.md / report).
 """
 import os
 import sys
@@ -31,13 +32,13 @@ st.title("Voice Sentiment & Emotion Recognition")
 st.caption("CT-317 Machine Learning CEP | Sumayyah Mohammedy, Amna Khan, Mariha Mahmood, "
            "Haris Bin Nasir")
 
-MODEL_PATH = os.path.join(Q2, "models", "wavlm_emotion.joblib")
-if not os.path.exists(MODEL_PATH):
-    st.error("Model not found. Run `python q2/q2_wavlm_emotion.py` first.")
-    st.stop()
-
 import audio_features as af   # noqa: E402
 import predict as pr          # noqa: E402
+
+MODEL_PATH = pr.MODEL_PATH
+if not os.path.exists(MODEL_PATH):
+    st.error("Model not found. Run `python q2/q2_final_model.py` first.")
+    st.stop()
 
 SENT_COLOR = {"Positive": "#1a9850", "Neutral": "#7f7f7f", "Negative": "#d73027"}
 EMO_CODE = {"ANG": "Anger", "DIS": "Disgust", "FEA": "Fear", "HAP": "Happy",
@@ -46,11 +47,10 @@ RAV_CODE = {"01": "Neutral", "03": "Happy", "04": "Sad", "05": "Anger", "06": "F
             "07": "Disgust"}
 
 
-@st.cache_resource(show_spinner="Loading the WavLM model (first time downloads ~380 MB)...")
+@st.cache_resource(show_spinner="Loading the speech model (first start can take a minute)...")
 def load():
     b = pr.load_model(MODEL_PATH)
-    import ssl_features
-    ssl_features._load()
+    pr.warm_up(b)
     return b
 
 
@@ -69,8 +69,8 @@ with st.sidebar:
     st.header("How it works")
     st.markdown(
         "1. **Low-pass filter** at 4 kHz removes high-frequency noise\n"
-        "2. **WavLM** (pretrained on 94k hours of speech) turns the voice into a "
-        "768-number description\n"
+        f"2. **{bundle['representation']}** (pretrained speech model) turns the voice "
+        "into a numeric description\n"
         f"3. A **{bundle['model_name']}** classifier predicts 6 emotions; their "
         "probabilities are summed into 3 sentiments\n\n"
         "**Tips for your own recordings**: speak one full sentence (2-4 s), "
@@ -182,8 +182,16 @@ if wav:
     with fc2:
         st.write("")
         st.write("")
-        if st.button("Add as my example"):
+        already = any(np.array_equal(x, v) for v, _, _ in st.session_state.examples)
+        if st.button("Add as my example", disabled=already,
+                     help="This recording is already one of your examples" if already else None):
             st.session_state.examples.append((x, bundle["emotions"].index(correct), src))
+            # keep a copy so models can be evaluated on real user recordings
+            import shutil
+            import time as _t
+            rec_dir = os.path.join(Q2, "my_recordings")
+            os.makedirs(rec_dir, exist_ok=True)
+            shutil.copy(wav, os.path.join(rec_dir, f"{correct}_{int(_t.time() * 1000)}.wav"))
             st.toast(f"Added a '{correct}' example ({len(st.session_state.examples)} total)")
 
 # ------------------------------------------------------- personalisation ---
