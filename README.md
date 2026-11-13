@@ -1,75 +1,60 @@
-# Voice Sentiment & Emotion Recognition (ML CEP, CT-317)
+# Paper Surface Defect Detection (ML CEP, CT-317)
 
 **Team:** Sumayyah Mohammedy (SE-23013), Amna Khan (SE-23039), Mariha Mahmood (SE-23047), Haris Bin Nasir (SE-23084)
 Department of Software Engineering, SE Batch 2023, Fall 2026. The full report is in [report/report.pdf](report/report.pdf).
 
-The system recognises the **sentiment** (positive / neutral / negative) and the **emotion** (anger, disgust, fear, happy, neutral, sad) in a short voice recording. The pipeline is:
+The system classifies images of a paper reel as **no defect / hole / pen mark** and draws a **bounding box** around the defect. It uses classical machine vision (no deep learning) and the four classifiers required by the handout.
 
 ```
-voice -> 4 kHz low-pass filter -> WavLM self-supervised speech features (layer 7)
-      -> scikit-learn classifier (KNN / Logistic Regression / Naive Bayes / SVM / MLP)
+image -> illumination flattening (robust z-score map) -> dark-region candidates
+      -> features: colour histogram, spatial binning, HOG, LBP, GLCM, shape + Hu moments
+      -> SVM / Naive Bayes / Logistic Regression / Neural Network
 ```
 
-## Results (speakers never seen in training)
+## Results on 225 held-out test images
 
-| System | 6 emotions | Sentiment |
-|---|---|---|
-| Hand-crafted features (MFCC, mel, chroma, spectral, prosody, FFT, bicoherence) + SVM | 52.4% | n/a |
-| **WavLM + Logistic Regression**, CREMA-D test speakers | **68.9%** | **86.4%** (balanced 78.5%) |
-| Same model on another corpus (RAVDESS), never trained on it | 45.7% | 76.0% |
-| + multi-corpus training (CREMA-D + RAVDESS), unseen RAVDESS actors | **70.5%** | **85.2%** |
-| + **few-shot personalisation** with 12 of the user's own clips | **82.4%** | **89.6%** |
+| Classifier | Global features | Candidate-patch features | All features |
+|---|---|---|---|
+| SVM (RBF) | 96.9% | 98.2% | 98.7% |
+| Naive Bayes | 94.2% | 96.0% | 98.7% |
+| Logistic Regression | 97.8% | 97.8% | **99.1%** |
+| Neural Network (MLP) | 98.2% | 97.3% | 98.7% |
 
-Chance level is 16.7% for 6 emotions. Always answering "Negative" gives 68.3% sentiment accuracy, but only 33.3% balanced accuracy.
+**Final system** (selected on the validation set): a hard-negative region classifier (SVM) that scores every candidate. It gets **97.3% test accuracy**: 77/77 clean images (no false alarms), 74/75 pen marks and 68/73 holes. The bounding box is on the real defect in every inspected test image. To re-check it from the saved model, run `python q3/verify_test.py`.
 
-**Why the first model failed on our own recordings:** it was trained on one corpus of acted, noisy studio clips. Your microphone, room and voice are a *new domain*. Multi-corpus training and personalisation fix most of that gap, as the table shows.
-
-## Try it: the app
+## Try it
 
 ```bash
 pip install -r requirements.txt
 streamlit run app.py
 ```
-* **Record with the microphone** (or upload a WAV) and get the sentiment and emotion with probabilities, plus a spectrogram of what the noise filter removed.
-* **Input-quality warnings** flag recordings that are too short, too quiet or clipped.
-* **Teach it your voice:** after each prediction, choose the emotion you actually meant and press *Add as my example*. With about 2 examples per emotion, press **Personalise**, and the model retrains on your voice in a few seconds.
+* **Single image:** upload a photo or pick or randomly draw a test image. You get the class, confidence, bounding box and a zoom on the defect.
+* **How the model sees it:** the illumination-flattened map with every candidate region and its score.
+* **Batch:** upload many images and get the defect count, defect rate and a downloadable CSV.
 
-The trained models are in `q2/models/`, so the app works right after cloning. WavLM (~380 MB) is downloaded automatically on first use.
+Command line: `python q3/predict.py image.jpg` (annotated image saved to `q3/predictions/`).
 
-Command line:
-```bash
-python q2/predict.py my_voice.wav
-```
+## Reproducing
 
-## Reproducing everything
-
-1. Get the data (not stored in the repo because of its size):
-   ```bash
-   git clone https://github.com/naweedfatima03/SentimentAnalysisDataset q2/dataset_repo   # CREMA-D, 7,442 clips
-   # RAVDESS speech (208 MB): https://zenodo.org/records/1188976
-   #   Audio_Speech_Actors_01-24.zip -> extract into q2/ravdess/
-   ```
+1. Download the image folder `out` from the Google Drive link in the CEP handout and extract it to `q3/data/out/{paper,hole,penMark}/` (1,500 JPGs, 1.6 GB, not stored in the repo).
 2. Run the pipeline:
    ```bash
-   python q2/q2_audio_sentiment.py --cutoff-study   # speaker-independent split + hand-crafted baseline
-   python q2/q2_extras.py                           # baseline extras (ensemble, per-speaker norm.)
-   # WavLM features, 4 shards in parallel (~45 min on CPU); writes q2/cache/ssl/emb_{0..3}.npy
-   python -c "import pandas as pd,numpy as np,os;d=pd.read_csv('q2/results/split.csv');p=[os.path.abspath('q2/dataset_repo/NoiseAudioWAV/'+f) for f in d.file];[open(f'q2/cache/ssl/list_{k}.txt','w').write('\n'.join(c)) for k,c in enumerate(np.array_split(p,4))]"
-   for k in 0 1 2 3; do python q2/ssl_features.py q2/cache/ssl/list_$k.txt q2/cache/ssl/emb_$k.npy 3 & done; wait
-   python q2/q2_wavlm_emotion.py                    # layer choice, 5 classifiers, RAVDESS, multi-corpus, final model
-   python q2/personalization.py                     # few-shot personalisation experiment
+   python q3/q3_defect_detection.py   # split, augmentation, 4 classifiers x 3 feature sets,
+                                      # region classifier, localisation, figures (~20 min, 12 cores)
+   python q3/verify_test.py           # final test accuracy straight from the image files
+   python q3/error_analysis.py        # figure of the misclassified test images
    ```
 
 ## Files
 
 | File | Purpose |
 |---|---|
-| `q2/audio_features.py` | low-pass filter, silence trim, 242 hand-crafted features |
-| `q2/q2_audio_sentiment.py` | speaker-independent split, baseline classifiers, ablation, cut-off study |
-| `q2/ssl_features.py` | WavLM embedding extraction |
-| `q2/q2_wavlm_emotion.py` | main experiment and deployed model |
-| `q2/personalization.py` | few-shot personalisation (experiment and function used by the app) |
-| `q2/predict.py` | prediction for WAV files, input-quality checks |
-| `app.py` | Streamlit application |
-| `q2/results/`, `q2/results/wavlm/` | all tables and figures |
+| `q3/defect_features.py` | pre-processing, candidate proposals, all features |
+| `q3/q3_defect_detection.py` | full experiment and model training |
+| `q3/predict.py` | prediction and bounding boxes for new images |
+| `q3/verify_test.py` | independent test-set check |
+| `app.py` | Streamlit inspection application |
+| `q3/results/` | tables and figures |
 | `report/` | LaTeX report and PDF (`tectonic -X compile report/report.tex`) |
+
+An earlier speech-emotion version of this project is kept on the [`voice-sentiment`](https://github.com/hbnasir23/ml-cep-ct317/tree/voice-sentiment) branch.

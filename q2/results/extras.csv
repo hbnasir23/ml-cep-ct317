@@ -1,9 +1,0 @@
-normalisation,model,test_acc,test_macro_f1
-global scaling,SVM,0.5244,0.522
-global scaling,Logistic Regression,0.5192,0.5192
-global scaling,Neural Network,0.5131,0.513
-global scaling,Ensemble (SVM+LR+NN),0.5375,0.5372
-per-speaker normalisation,SVM,0.6132,0.611
-per-speaker normalisation,Logistic Regression,0.6089,0.6076
-per-speaker normalisation,Neural Network,0.5889,0.5887
-per-speaker normalisation,Ensemble (SVM+LR+NN),0.6132,0.612
