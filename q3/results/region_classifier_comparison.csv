@@ -1,0 +1,5 @@
+features,model,best_params,val_acc,test_acc,test_macro_f1,time_s
+multi-proposal (patch),SVM,"{""C"": ""10"", ""gamma"": ""0.0001""}",0.9956,0.9733,0.9729,469.5
+multi-proposal (patch),Naive Bayes,"{""var_smoothing"": ""1e-09""}",0.9689,0.9689,0.9685,2.2
+multi-proposal (patch),Logistic Regression,"{""C"": ""0.01""}",0.9867,0.9644,0.9642,13.1
+multi-proposal (patch),Neural Network,"{""hidden_layer_sizes"": ""(256, 64)"", ""alpha"": ""1.0""}",0.9911,0.9733,0.9731,76.4
