@@ -10,6 +10,7 @@
 \usepackage{subcaption}
 \usepackage{array}
 \usepackage{tabularx}
+\usepackage{multirow}
 \usepackage{xcolor}
 \usepackage{enumitem}
 \usepackage{listings}
@@ -44,10 +45,10 @@
 \vspace{2cm}
 {\Huge\bfseries Complex Engineering Problem\par}
 \vspace{0.5cm}
-{\LARGE Sentiment Analysis from Audio Recordings\par}
+{\LARGE Surface Defect Detection and Classification\\[4pt] from Images\par}
 \vspace{0.3cm}
-{\large Speech emotion and sentiment recognition with noise filtering,\\
-self-supervised speech features and few-shot personalisation\par}
+{\large Classifying paper-reel images as defect-free, hole or pen mark,\\
+and localising the defect with a bounding box\par}
 \vspace{2cm}
 {\large\bfseries Group Members\par}
 \vspace{6pt}
@@ -73,33 +74,31 @@ S4 & Haris Bin Nasir & SE-23084\\ \hline
 % ================================================================ abstract
 \begin{abstract}
 \noindent
-This project builds a system that recognises the emotion and sentiment of a speaker from a
-short voice recording. We use 7,442 noisy clips of 91 actors from CREMA-D (six emotions:
-anger, disgust, fear, happy, neutral, sad). The clips are de-noised with a 4\,kHz low-pass
-filter and evaluated on a strict \emph{speaker-independent} split: the test speakers are
-never heard during training.
+This project detects defects on a reel of paper from camera images. Each image must be
+classified into one of three classes (defect-free paper, paper with a hole, paper with a pen
+mark), and in defective images the defect must be localised with a bounding box. The dataset
+contains 1,500 images of 2000$\times$2000 pixels.
 
-We compare two families of features with the five classifiers required by the handout (KNN,
-Logistic Regression, Naive Bayes, SVM and a Neural Network). The first family is 242
-hand-crafted features from the literature (FFT bands, MFCCs, mel-spectrogram, chromagram,
-spectral shape, prosody, bicoherence); the best classifier with them, an SVM, reaches
-\textbf{52.4\%} six-emotion accuracy. The second family is embeddings from the pretrained
-self-supervised speech model WavLM; these raise accuracy to \textbf{68.9\%} (Logistic
-Regression), and three-class sentiment (positive, neutral, negative) is recognised with
-\textbf{86.4\%} accuracy.
+The defects are tiny (a hole covers less than 0.01\% of the image), while uneven
+illumination and paper texture dominate the raw pixels. We therefore designed a classical
+pipeline in four steps:
+\begin{enumerate}
+  \item \emph{illumination flattening}, which converts every pixel into a robust z-score;
+  \item \emph{candidate proposals}, the dark regions found by thresholding and morphology;
+  \item \emph{features} from the handout (colour histogram, spatial binning, HOG) and from the
+        literature (LBP texture, GLCM statistics, blob shape descriptors and Hu moments),
+        computed for the whole image and for the candidate region;
+  \item \emph{data augmentation} by rotations and flips.
+\end{enumerate}
 
-Testing on a second corpus (RAVDESS) exposed the main practical problem, a loss of accuracy
-on new recording conditions, which is also why our first model performed poorly on our own
-microphone recordings. Two remedies were developed and measured:
-\begin{itemize}
-  \item \emph{multi-corpus training}, which lifts accuracy on unseen RAVDESS actors from 51\%
-        to \textbf{70.5\%} without losing CREMA-D accuracy;
-  \item \emph{few-shot personalisation}, in which a new user provides only two labelled
-        clips per emotion; this raises accuracy on their other recordings from 71\% to
-        \textbf{82\%} (emotion) and from 84\% to \textbf{90\%} (sentiment).
-\end{itemize}
-All of this is available in an interactive web application with live microphone input,
-input-quality warnings and in-app personalisation. The code is public at \repo.
+Four classifiers (SVM, Naive Bayes, Logistic Regression and a Neural Network) were tuned on a
+validation set and evaluated once on 225 held-out test images. All of them exceed 94\%
+accuracy, and the best reaches \textbf{99.1\%}. For localisation, a region classifier trained
+with hard negatives scores every candidate. The final system, selected on validation data,
+reaches \textbf{97.3\%} test accuracy with no false alarms on clean paper. Its bounding box
+lies on the true defect in every inspected test image. The models are delivered in an
+interactive web application with single-image and batch inspection and a view of how the
+model sees each image. The code is public at \repo.
 \end{abstract}
 
 \tableofcontents
@@ -110,474 +109,354 @@ input-quality warnings and in-app personalisation. The code is public at \repo.
 \cleardoublepage\pagenumbering{arabic}
 \chapter{Introduction}
 
-\section{Problem statement}
-Sentiment analysis from audio uses the acoustic properties of speech, such as intonation,
-pitch, energy and tempo, to infer the emotional state of a speaker. It has applications in
-call-centre quality monitoring, voice assistants, media analysis and mental-health support.
-The CEP asks us to:
-\begin{enumerate}
-  \item select audio files and create training, validation and test sets that are best suited
-        to train and evaluate the classifiers;
-  \item remove noise from the audio using low-pass filtering;
-  \item review the literature and extract suitable features (Fourier transform, MFCC,
-        mel-spectrogram, chromagram, bicoherence, spectral centroid, bandwidth and contrast);
-  \item evaluate K-Nearest Neighbours, Logistic Regression, Naive Bayes, Support Vector
-        Machines and a Neural Network (scikit-learn).
-\end{enumerate}
+\section{Motivation}
+Automatic visual inspection is essential in modern manufacturing, where defects must be
+found in real time at production speed. Machine-vision systems capture images of a
+material's surface and detect anomalies such as scratches, holes and marks. This is faster,
+cheaper and more consistent than manual inspection, and the collected data can be used to
+optimise the production process. Deep networks are common today, but a solid understanding
+of the classical approach (isolating an object and describing it with engineered features) is
+still important, and is the focus of this project.
 
-\section{Motivation for the extended work}
-Our first complete pipeline met all four requirements but reached only about 52\% accuracy
-on unseen speakers. It also behaved poorly when we tested it with \emph{our own voices}
-through a microphone. We therefore set ourselves a further goal: build a model that remains
-accurate on recordings it was not trained on, and measure this honestly. This led to three
-additions: (i) pretrained self-supervised speech features, (ii) cross-corpus and multi-corpus
-evaluation, and (iii) few-shot personalisation to the user's own voice.
+\section{Problem statement}
+Following the CEP handout, we must:
+\begin{enumerate}
+  \item extract features of the object from the dataset, using the suggested features (colour
+        histogram, spatial binning, histogram of oriented gradients) and further features
+        identified in the literature;
+  \item optionally use data augmentation to obtain more training data;
+  \item evaluate Support Vector Machines, Naive Bayes, Logistic Regression and a Neural
+        Network on two tasks: (i) \emph{three-class classification} into paper, paper with
+        a hole and paper with a pen mark; (ii) \emph{defect localisation}, i.e.\ finding the
+        defect in defective images and drawing a bounding box around it.
+\end{enumerate}
 
 \section{Contributions}
 \begin{itemize}
-  \item A complete, reproducible pipeline covering data selection, low-pass de-noising,
-        feature extraction and five classifiers on a speaker-independent split.
-  \item A hand-crafted feature baseline (242 features) with a feature-group ablation and a
-        study of the filter cut-off.
-  \item WavLM layer embeddings that raise emotion accuracy from 52.4\% to 68.9\% and
-        sentiment accuracy to 86.4\%.
-  \item Cross-corpus testing on RAVDESS, and multi-corpus training that improves
-        generalisation to new recording conditions.
-  \item Few-shot personalisation, measured on eight unseen speakers.
-  \item An interactive web application: microphone input, sentiment and emotion with
-        probabilities, a view of what the filter removed, input-quality checks, and
-        personalisation in the browser.
+  \item An analysis of the dataset that explains why raw global features are insufficient
+        (tiny defects, strong lighting gradient, static lens blemishes).
+  \item An illumination-flattening and candidate-proposal stage that makes the defects
+        visible and isolates them as objects.
+  \item A feature set combining the required features with LBP, GLCM, shape descriptors and
+        Hu moments, at image level and at candidate level.
+  \item A comparison of four classifiers on three feature sets, all above 94\% test
+        accuracy and up to 99.1\%.
+  \item A hard-negative region classifier that performs both classification and
+        localisation, with an error analysis.
+  \item An interactive application for single-image and batch inspection with
+        explanations.
 \end{itemize}
 
 \section{Tools}
-Python 3.13, scikit-learn 1.8 \cite{sklearn}, librosa 1.0 \cite{librosa}, SciPy,
-PyTorch 2.10 and Hugging Face Transformers (WavLM), and Streamlit for the application.
-Everything runs on a CPU.
+Python 3.13, scikit-learn 1.8 \cite{sklearn}, OpenCV 5.0, scikit-image 0.26 \cite{skimage},
+NumPy, pandas, matplotlib and Streamlit. Everything runs on a CPU.
 
-% =================================================================== data
-\chapter{Datasets and Data Selection}
-
-\section{CREMA-D (main dataset)}
-The provided repository contains a noisy version of CREMA-D \cite{cremad}: \textbf{7,442}
-WAV clips (16\,kHz, mono, about 2--3\,s) from \textbf{91 actors} (48 male, 43 female, aged
-20--74, of diverse ethnicities). Each actor reads 12 sentences with one of six emotions.
-File names encode the metadata, for example \texttt{1001\_DFA\_ANG\_XX.wav} = actor 1001,
-sentence ``DFA'', \emph{Anger}, unspecified intensity. The classes are almost balanced:
-1,271 clips each for anger, disgust, fear, happy and sad, and 1,087 for neutral.
-
-\section{Speaker-independent split}
-A classifier that will be used on \emph{new} people must be evaluated on people it has never
-heard. If clips were split at random, every actor would appear in both training and test
-data, and part of the accuracy would come from recognising the voice instead of the emotion.
-We therefore split the \textbf{actors} 70/15/15 with \texttt{GroupShuffleSplit}, and the code
-asserts that the three actor sets are disjoint (Table~\ref{tab:split}). All emotions and all
-12 sentences appear in every subset. Validation speakers are used for all model choices; the
-test speakers are used exactly once per reported result.
+% ================================================================= dataset
+\chapter{Dataset Analysis}
+The dataset, downloaded from the Google Drive folder linked in the handout, contains
+\textbf{1,500} JPEG images of 2000$\times$2000 pixels: 509 \emph{paper} (defect-free),
+489 \emph{hole} and 502 \emph{penMark}. Inspecting the data revealed several properties that
+determined the design:
+\begin{itemize}
+  \item The three colour channels are identical, so the images are effectively
+        \textbf{grayscale}, and the ``colour histogram'' is an intensity histogram.
+  \item The defects are \textbf{tiny}. A hole is a dark speck of about 5--25\,px (less than
+        0.01\% of the image), and a pen mark is a thin dark stroke of about 15--120\,px.
+        The paper texture and a strong \textbf{illumination gradient} dominate the image,
+        so global features of the raw image mostly describe lighting and texture.
+  \item A few faint dark blemishes appear at the \textbf{same position in every image}
+        (dust on the lens or background). A detector must learn to ignore them.
+  \item The image numbers 0--1499 are shared by all classes and interleaved randomly, so the
+        images are not consecutive video frames, and a stratified random split is
+        appropriate.
+\end{itemize}
+The images were split with stratification into \textbf{1,050 training, 225 validation and
+225 test} images (70/15/15). Validation images are used for every design and
+hyper-parameter decision, and the test images only for the final evaluation.
 
 \begin{table}[H]
 \centering
-\caption{Speaker-independent split of CREMA-D.}
-\label{tab:split}
-\begin{tabular}{lcccccccc}
+\caption{Dataset split.}
+\begin{tabular}{lcccc}
 \toprule
-Split & Actors & ANG & DIS & FEA & HAP & NEU & SAD & Total\\
+Split & Paper & Hole & Pen mark & Total\\
 \midrule
-Train & 63 & 880 & 880 & 880 & 880 & 752 & 880 & 5,152\\
-Validation & 14 & 195 & 195 & 195 & 195 & 167 & 195 & 1,142\\
-Test & 14 & 196 & 196 & 196 & 196 & 168 & 196 & 1,148\\
+Train & 356 & 342 & 352 & 1,050\\
+Validation & 76 & 74 & 75 & 225\\
+Test & 77 & 73 & 75 & 225\\
 \bottomrule
 \end{tabular}
 \end{table}
 
-\section{RAVDESS (second corpus)}
-To test robustness to new recording conditions we use RAVDESS \cite{ravdess}: 24
-professional actors (12 female, 12 male), recorded in a different studio with different
-equipment, as clean 48\,kHz audio (resampled to 16\,kHz). It covers the same six emotions
-plus \emph{calm} and \emph{surprised}, which we exclude, leaving \textbf{1,056 clips}. It
-is used in two ways: (a) as a completely unseen test corpus, and (b) split by actor
-(actors 1--16 for training, 17--24 for testing) for the multi-corpus experiments.
-
-\section{Sentiment labels}
-The handout speaks of \emph{sentiment}. Following the usual valence grouping, we map the six
-emotions to three sentiments: \textbf{Positive} = Happy, \textbf{Neutral} = Neutral, and
-\textbf{Negative} = Anger, Disgust, Fear, Sad. The sentiment probabilities are the sums of
-the corresponding emotion probabilities. Because four of the six emotions are negative,
-always answering ``Negative'' already gives 68.3\% sentiment accuracy on the test speakers.
-We therefore also report \emph{balanced accuracy} and macro-F1, for which that trivial
-baseline scores 33.3\%.
-
 % =========================================================== preprocessing
-\chapter{Pre-processing: Noise Removal}
-Every clip, including microphone recordings in the application, goes through the same three
-steps:
+\chapter{Pre-processing and Candidate Regions}
 \begin{enumerate}
-  \item \textbf{Low-pass filtering.} A 6th-order Butterworth low-pass filter with a
-        \textbf{4\,kHz} cut-off is applied in second-order sections with forward--backward
-        filtering (\texttt{sosfiltfilt}). Forward--backward filtering has zero phase
-        distortion, so the timing of pitch and energy contours is preserved. Most of the
-        prosodic and emotional information in speech lies below 4\,kHz \cite{rabiner},
-        whereas the added noise extends up to the 8\,kHz Nyquist limit.
-  \item \textbf{Silence trimming} of leading and trailing segments more than 30\,dB below
-        the peak.
-  \item \textbf{Peak normalisation}, so that the recording gain and the distance to the
-        microphone do not matter.
+  \item \textbf{Down-sampling} to 1000$\times$1000 with area interpolation, which preserves
+        small dark spots.
+  \item \textbf{Illumination flattening.} The background is estimated with a wide Gaussian
+        blur ($\sigma=20$\,px) and subtracted: $r = I - G_\sigma * I$.
+  \item \textbf{Robust z-score map}
+        $z = (r-\operatorname{median}(r))\,/\,(1.4826\,\mathrm{MAD}(r))$. Clean paper texture
+        stays within about $[-7,+10]$, while holes and ink reach $-10$ to $-50$, independently
+        of the lighting.
+  \item \textbf{Candidate proposals.} Pixels with $z<-4$ (after light smoothing) are kept, a
+        7$\times$7 morphological closing joins the broken strokes of a pen mark, and connected
+        components are ranked by their ``darkness mass'' $\sum(-z)$.
 \end{enumerate}
-The filter also makes clean microphone recordings and the noisy training clips more alike,
-since both are reduced to the same 0--4\,kHz band.
+A calibration over all 1,500 images confirmed that the classes separate: the darkest
+response on clean paper is $-5.9\pm0.6\sigma$, compared with $-30.7\pm10.5\sigma$ for holes
+and $-23.8\pm4.3\sigma$ for pen marks. Pen-mark regions are about 4--5 times larger than hole
+regions.
 
 \begin{figure}[H]
 \centering
-\includegraphics[width=0.95\textwidth]{q2_lowpass_demo.png}
-\caption{Waveform (top) and spectrogram (bottom) of a noisy clip before and after the
-4\,kHz low-pass filter.}
-\label{fig:lowpass}
+\includegraphics[width=0.8\textwidth]{q3_preprocessing_pipeline.png}
+\caption{Pre-processing for a test image of each class: grayscale input,
+illumination-flattened z-map, and the patch around the top candidate.}
+\label{fig:pipe}
 \end{figure}
 
 % ================================================================ features
 \chapter{Feature Extraction}
-
 \section{Literature review}
-Speech emotion recognition has traditionally relied on hand-crafted descriptors
-\cite{elayadi,schuller}:
+Classical surface-inspection systems describe defects by intensity statistics, texture and
+shape \cite{xie,neogi}. In addition to the handout's colour histogram, spatial binning
+\cite{udacity} and HOG \cite{hog}, we used:
 \begin{itemize}
-  \item \emph{Spectral and cepstral} features, which describe the vocal-tract shape and
-        voice quality: MFCCs, mel-spectrogram, spectral centroid, bandwidth, contrast,
-        roll-off and flatness.
-  \item \emph{Prosodic} features (fundamental frequency F0, energy, speaking rate), which
-        mainly carry arousal. Anger and happiness, for example, have higher and more
-        variable pitch and energy than sadness.
-  \item \emph{Higher-order spectra} such as the bicoherence, which measures quadratic phase
-        coupling and has been used for synthetic-speech detection \cite{albadawy}.
+  \item \textbf{Local Binary Patterns (LBP)} \cite{lbp}, a grey-scale-invariant texture
+        descriptor widely used for surface and fabric defect detection;
+  \item \textbf{Grey-Level Co-occurrence Matrix (GLCM)} statistics \cite{haralick}
+        (contrast, dissimilarity, homogeneity, energy, correlation), the classical texture
+        features for steel, wood and paper inspection;
+  \item \textbf{shape descriptors} of the segmented blob (area, aspect ratio, extent,
+        solidity, eccentricity, major and minor axis, circularity) and \textbf{Hu moment
+        invariants} \cite{hu}, which directly encode ``compact spot'' versus ``elongated
+        stroke''.
 \end{itemize}
-Since 2020, \emph{self-supervised} speech models such as wav2vec~2.0 \cite{wav2vec2},
-HuBERT and WavLM \cite{wavlm} have been pretrained on tens of thousands of hours of
-unlabelled speech. Their intermediate layers encode speaker, phonetic and paralinguistic
-information, and on the SUPERB benchmark \cite{superb} a light classifier on frozen WavLM
-features outperforms hand-crafted feature sets for emotion recognition. We evaluate both
-approaches.
 
-\section{Hand-crafted features (baseline)}
-Frame-level features use a 32\,ms window and a 10\,ms hop. They are summarised over time by
-mean and standard deviation, giving \textbf{242} values per clip (Table~\ref{tab:feat}).
+\section{Implemented features}
 \begin{table}[H]
 \centering
-\caption{Hand-crafted feature groups.}
+\caption{Feature groups (4,959 features in total).}
 \label{tab:feat}
-\begin{tabularx}{\textwidth}{lcX}
+\begin{tabularx}{\textwidth}{llcX}
 \toprule
-Group & Dim. & Description\\
+Set & Group & Dim. & Description\\
 \midrule
-Fourier transform & 16 & log relative energy of the FFT magnitude in 16 bands (0--4\,kHz)\\
-MFCC & 80 & 20 MFCCs and their deltas (mean, std)\\
-Mel-spectrogram & 80 & 40 log-mel bands (mean, std)\\
-Chromagram & 24 & 12 pitch classes (mean, std)\\
-Spectral shape & 22 & centroid, bandwidth, roll-off, flatness, 7-band contrast\\
-Prosody & 12 & F0 (YIN) statistics, RMS energy, zero-crossing rate, voiced ratio, duration\\
-Bicoherence & 8 & mean, variance, skewness, kurtosis of magnitude and phase\\
+\multirow{4}{*}{Global}
+ & Colour histogram & 32 & intensity histogram of the image\\
+ & z histogram & 32 & log-count histogram of the z-map\\
+ & Spatial binning & 1,024 & z-map min-pooled to 32$\times$32\\
+ & HOG & 1,764 & HOG of the z-map (128$\times$128, 16\,px cells, 2$\times$2 blocks, 9 bins)\\
+\midrule
+\multirow{6}{*}{Patch}
+ & z histogram & 16 & histogram of the candidate patch\\
+ & Spatial binning & 256 & patch resized to 16$\times$16\\
+ & HOG & 1,764 & 64$\times$64 patch, 8\,px cells, 2$\times$2 blocks, 9 bins\\
+ & LBP & 10 & uniform LBP ($P=8$, $R=1$) histogram\\
+ & GLCM & 40 & 5 properties $\times$ 2 distances $\times$ 4 angles\\
+ & Shape & 21 & blob geometry, darkness statistics, 7 Hu moments, patch scale\\
 \bottomrule
 \end{tabularx}
 \end{table}
-\noindent The bicoherence is estimated by averaging over Hann-windowed segments:
-\begin{equation}
-b(f_1,f_2)=\frac{\left|\mathbb{E}[X(f_1)X(f_2)X^*(f_1+f_2)]\right|}
-{\sqrt{\mathbb{E}[|X(f_1)X(f_2)|^2]\;\mathbb{E}[|X(f_1+f_2)|^2]}}.
-\end{equation}
+\noindent The patch is a square crop centred on the candidate, with a side of
+$\max(64, 1.4\times$ the blob size$)$, resized to 64$\times$64. This keeps the whole pen
+stroke inside the patch.
 
-\section{Self-supervised features: WavLM}
-WavLM-base-plus \cite{wavlm} (94\,M parameters, pretrained by Microsoft on 94k hours of
-unlabelled speech) consists of a convolutional encoder followed by 12 transformer layers. We
-feed it the filtered 16\,kHz signal and average the output of each of the 13 layers over
-time, giving 13 vectors of 768 numbers per clip. The network is \emph{frozen}: it is used only
-as a feature extractor, and the actual classifiers are the scikit-learn models required by
-the handout. Extracting features for all clips took about 45 minutes on a 12-core CPU.
+\section{Data augmentation}
+Paper has no preferred orientation, so every training and validation image is also used
+rotated by 90$^\circ$ and 180$^\circ$ and flipped horizontally, which quadruples the data.
+Test images are never augmented.
 
-\paragraph{Choosing the layer.} Different layers encode different information, so a quick
-linear classifier (Logistic Regression) was trained on each layer and scored on the
-\emph{validation} speakers (Figure~\ref{fig:layers}). Emotion information peaks in the middle
-of the network (\textbf{layer~7}, 71.3\% validation accuracy). Early layers are closer to the
-raw spectrum, and the last layers specialise in the pretraining objective. Layer 7 is used for
-all further experiments.
-\begin{figure}[H]
-\centering
-\includegraphics[width=0.72\textwidth]{wavlm_layer_probe.png}
-\caption{Validation accuracy of a linear classifier on each WavLM layer.}
-\label{fig:layers}
-\end{figure}
+% =========================================================== classification
+\chapter{Task (i): Three-Class Classification}
+\section{Protocol}
+Every classifier is preceded by a \texttt{StandardScaler}. Hyper-parameters are chosen by
+grid search on the validation images (SVM: $C$ and $\gamma$; Naive Bayes: variance
+smoothing; Logistic Regression: $C$; MLP: architecture and $\alpha$). The selected model is
+refit on the augmented training and validation data and evaluated once on the 225 test
+images. Three feature sets were compared to measure the value of the candidate patch.
 
-% ============================================================ classifiers
-\chapter{Classifiers and Training Protocol}
-Each classifier follows a \texttt{StandardScaler} fitted on the training data only. For
-Naive Bayes on WavLM features, a PCA whitening step (128 components) is added, because
-Gaussian NB assumes independent features. Hyper-parameters are selected by grid search on the
-validation speakers; the best setting is refit on training and validation data, and the test
-speakers are evaluated once.
+\section{Results}
 \begin{table}[H]
 \centering
-\caption{Hyper-parameter grids (WavLM features; the baseline grids are similar).}
-\begin{tabularx}{\textwidth}{lX}
+\caption{Test accuracy on 225 held-out images (validation accuracy in parentheses).}
+\label{tab:res}
+\begin{tabular}{lccc}
 \toprule
-Classifier & Grid\\
+Classifier & Global (2,852) & Patch (2,107) & All (4,959)\\
 \midrule
-KNN & $k\in\{5,11,21,41\}$, uniform or distance weights, Euclidean or cosine\\
-Logistic Regression & multinomial, L2, $C\in\{0.001,0.003,0.01,0.03,0.1\}$\\
-Gaussian Naive Bayes & variance smoothing $\in\{10^{-9},10^{-6},10^{-3},10^{-1}\}$\\
-SVM (RBF) & $C\in\{1,3,10,30\}$, $\gamma\in\{\text{scale},3\cdot10^{-4},10^{-3}\}$\\
-Neural Network (MLP) & hidden layers (256), (512), (512,128); $\alpha\in\{0.01,0.1,1\}$; Adam, early stopping\\
-\bottomrule
-\end{tabularx}
-\end{table}
-
-% ================================================================= results
-\chapter{Results}
-
-\section{Baseline: hand-crafted features}
-\begin{table}[H]
-\centering
-\caption{Six-emotion accuracy on unseen CREMA-D speakers with hand-crafted features (chance = 16.7\%).}
-\label{tab:base}
-\begin{tabular}{llccc}
-\toprule
-Model & Selected hyper-parameters & Val.\ acc. & Test acc. & Test macro-F1\\
-\midrule
-KNN & $k=15$, cosine & 0.469 & 0.408 & 0.381\\
-Logistic Regression & $C=1$ & 0.525 & 0.519 & 0.519\\
-Naive Bayes & smoothing $10^{-9}$ & 0.387 & 0.402 & 0.354\\
-SVM (RBF) & $C=3$, $\gamma$=scale & 0.531 & \best{0.524} & \best{0.522}\\
-Neural Network & (128), $\alpha=0.1$ & 0.537 & 0.513 & 0.513\\
-\bottomrule
-\end{tabular}
-\end{table}
-\begin{figure}[H]
-\centering
-\includegraphics[width=\textwidth]{q2_confusion_matrices.png}
-\caption{Hand-crafted features: row-normalised test confusion matrices.}
-\end{figure}
-
-\paragraph{Feature ablation and filter cut-off.} With the SVM, MFCCs are the strongest single
-group (0.490 on their own), and removing them causes the largest drop (to 0.504). Prosody is
-remarkably strong for only 12 numbers (0.449). Bicoherence (0.289) and chroma (0.351) are weak
-on their own and redundant in the full set. Varying the low-pass cut-off between 2\,kHz and
-no filter changed accuracy only within 0.524--0.531, which confirms that the emotional cues
-lie below 3--4\,kHz.
-
-\section{WavLM features}
-\begin{table}[H]
-\centering
-\caption{WavLM layer-7 features on unseen CREMA-D speakers. Sentiment majority baseline:
-accuracy 0.683, balanced accuracy 0.333.}
-\label{tab:wavlm}
-\begin{tabular}{lcccccc}
-\toprule
-& \multicolumn{3}{c}{6 emotions} & \multicolumn{3}{c}{Sentiment (3 classes)}\\
-\cmidrule(lr){2-4}\cmidrule(lr){5-7}
-Model & Val. & Test & F1 & Test & F1 & Bal.\ acc.\\
-\midrule
-KNN ($k=5$, cosine, distance) & 0.535 & 0.528 & 0.513 & 0.789 & 0.681 & 0.667\\
-\textbf{Logistic Regression} ($C=0.01$) & \best{0.713} & \best{0.689} & \best{0.692} & \best{0.864} & \best{0.810} & \best{0.785}\\
-Naive Bayes (PCA-128) & 0.519 & 0.531 & 0.527 & 0.742 & 0.663 & 0.696\\
-SVM ($C=10$, $\gamma=3\cdot10^{-4}$) & 0.711 & 0.681 & 0.683 & 0.861 & 0.800 & 0.769\\
-Neural Network (512, $\alpha=1$) & 0.703 & 0.677 & 0.679 & 0.860 & 0.801 & 0.770\\
+SVM (RBF) & 0.969 (0.973) & 0.982 (\best{0.991}) & 0.987 (0.987)\\
+Naive Bayes & 0.942 (0.920) & 0.960 (0.960) & 0.987 (0.964)\\
+Logistic Regression & 0.978 (0.973) & 0.978 (0.973) & \best{0.991} (0.982)\\
+Neural Network (MLP) & 0.982 (0.969) & 0.973 (0.982) & 0.987 (0.978)\\
 \bottomrule
 \end{tabular}
 \end{table}
 
-\noindent Self-supervised features improve every classifier, and the best result rises from
-52.4\% to \textbf{68.9\%} (+16.5 points). Logistic Regression, the simplest discriminative
-model, is the best. This is typical for strong pretrained embeddings, which make the classes
-close to linearly separable. KNN and Naive Bayes remain weak: KNN suffers from the 768-dimensional
-space and from distances dominated by speaker differences, and Naive Bayes from its independence
-assumption.
-
 \begin{figure}[H]
 \centering
-\begin{subfigure}{0.49\textwidth}
-\includegraphics[width=\linewidth]{wavlm_cm_emotion.png}
-\caption{Six emotions}
-\end{subfigure}
-\hfill
-\begin{subfigure}{0.49\textwidth}
-\includegraphics[width=\linewidth]{wavlm_cm_sentiment.png}
-\caption{Sentiment}
-\end{subfigure}
-\caption{Logistic Regression on WavLM features: row-normalised confusion matrices on the
-unseen CREMA-D test speakers.}
-\label{fig:cm}
+\includegraphics[width=0.8\textwidth]{q3_model_comparison.png}
+\caption{Test accuracy of the four classifiers for each feature set.}
 \end{figure}
-
-\paragraph{Per-class behaviour.} Neutral (F1 0.86) and Anger (F1 0.75, recall 0.83) are the
-easiest classes. Fear (0.60) and Disgust (0.62) are the hardest and are mostly confused with
-Sad and Anger respectively. For sentiment, Negative is recognised with recall 0.94 and Neutral
-with 0.79. Positive (recall 0.62) is sometimes mistaken for Negative, because Happy and Anger
-share high arousal (loud, high-pitched speech).
-
 \begin{figure}[H]
 \centering
-\includegraphics[width=0.95\textwidth]{wavlm_model_comparison.png}
-\caption{All five classifiers on WavLM features: CREMA-D test speakers and the unseen RAVDESS
-corpus.}
-\label{fig:comp}
+\includegraphics[width=\textwidth]{q3_confusion_matrices.png}
+\caption{Test confusion matrices with all features.}
 \end{figure}
 
-\section{Generalisation to a new corpus}
-RAVDESS was never used for training in the experiments of Table~\ref{tab:wavlm}. On it the
-best model reaches only \textbf{45.7\%} emotion accuracy and 57.1\% balanced sentiment
-accuracy (Figure~\ref{fig:comp}). A different studio, microphone and acting style is enough
-to cut performance by a third. This \emph{domain shift} is exactly what we experienced when
-testing with our own voices, and it is invisible if one evaluates only on a split of a single
-dataset.
+\paragraph{Discussion.}
+All four classifiers perform very well (94--99\%) \emph{because} the pre-processing makes the
+defects visible: on the illumination-flattened z-map, even the global HOG and spatial-binning
+features carry the defect signal. The candidate-patch features (texture and shape of the
+isolated object) give the highest validation accuracy, and combining both sets gives the best
+test accuracy (98.7--99.1\%). With all features even Naive Bayes reaches 98.7\%, which shows
+that the shape descriptors make the classes nearly linearly separable. The few remaining
+errors are almost all holes: very faint or very small holes that look like paper texture, and
+elongated holes that resemble a short pen stroke (Figure~\ref{fig:err}).
 
-\section{Remedy 1: multi-corpus training}
-We added RAVDESS actors 1--16 to the training data and tested on the eight RAVDESS actors
-17--24 that were never seen (Table~\ref{tab:multi}).
+% ============================================================ localisation
+\chapter{Task (ii): Defect Localisation}
+\section{Method}
+Localisation reuses the trained classifiers. A \textbf{region classifier} is trained on the
+patch features of the \emph{top five} candidates of every training image:
+\begin{itemize}
+  \item the top candidate of a hole or pen-mark image is labelled with the image class;
+  \item all candidates of defect-free images, and the lower-ranked candidates of defect
+        images (mostly static lens blemishes and texture specks), are labelled
+        \emph{background}. These act as \textbf{hard negatives} (5,235 training regions:
+        694 defects and 4,541 background).
+\end{itemize}
+At inference every candidate is scored, and the one with the highest $P(\text{defect})$ is the
+detected defect. Its bounding box, scaled back to 2000$\times$2000 pixels, is drawn with the
+predicted class and confidence. The same decision also gives the image class
+(\emph{multi-proposal decision}). A first version trained the region classifier only on top
+candidates. It was rejected after analysis because it labelled faint specks on clean paper
+as holes: it had never seen such regions during training. Hard-negative training fixed this.
+
 \begin{table}[H]
 \centering
-\caption{Effect of multi-corpus training (Logistic Regression, WavLM layer 7).}
-\label{tab:multi}
-\begin{tabular}{lcccc}
-\toprule
-& \multicolumn{2}{c}{CREMA-D test speakers} & \multicolumn{2}{c}{RAVDESS actors 17--24}\\
-\cmidrule(lr){2-3}\cmidrule(lr){4-5}
-Training data & Emotion & Sentiment & Emotion & Sentiment\\
-\midrule
-CREMA-D only & 0.689 & 0.864 & 0.514 & 0.787\\
-CREMA-D + RAVDESS 1--16 & \best{0.693} & 0.860 & \best{0.705} & \best{0.852}\\
-\bottomrule
-\end{tabular}
-\end{table}
-\noindent Accuracy on new RAVDESS speakers rises by 19 points, while CREMA-D accuracy is
-unchanged. More diverse training data makes the model more robust, so the deployed model is
-trained on both corpora (all 8,498 clips).
-
-\begin{figure}[H]
-\centering
-\includegraphics[width=0.5\textwidth]{wavlm_cm_ravdess_multi.png}
-\caption{Multi-corpus model on the unseen RAVDESS actors 17--24.}
-\end{figure}
-
-\section{Remedy 2: few-shot personalisation}
-\label{sec:pers}
-Even a multi-corpus model sees a new user through a new microphone, room and speaking style.
-Our solution is to let the user provide a few labelled examples of their own voice. The base
-model is then retrained on the corpus plus these examples, each user example carrying a
-sample weight of 20. With Logistic Regression this takes a few seconds, so it can be done
-live in the application.
-
-\paragraph{Evaluation.} We simulated eight new users with RAVDESS actors 17--24, whom the base
-model never saw. For each actor, $k$ randomly chosen clips per emotion were used as the
-user's examples, and the actor's \emph{remaining} clips formed the test set. Each experiment
-was repeated with three random draws (Table~\ref{tab:pers}, Figure~\ref{fig:pers}).
-\begin{table}[H]
-\centering
-\caption{Few-shot personalisation: mean accuracy ($\pm$ std over actors and draws) on each
-speaker's other clips.}
-\label{tab:pers}
-\begin{tabular}{ccc}
-\toprule
-Own clips provided & Emotion accuracy & Sentiment accuracy\\
-\midrule
-0 (base model) & 0.710 $\pm$ 0.072 & 0.844 $\pm$ 0.060\\
-6 ($k=1$ per emotion) & 0.782 $\pm$ 0.088 & 0.875 $\pm$ 0.061\\
-\textbf{12} ($k=2$) & \best{0.824} $\pm$ 0.092 & \best{0.896} $\pm$ 0.066\\
-18 ($k=3$) & 0.829 $\pm$ 0.092 & 0.885 $\pm$ 0.070\\
-\bottomrule
-\end{tabular}
-\end{table}
-\begin{figure}[H]
-\centering
-\includegraphics[width=0.7\textwidth]{wavlm_personalization.png}
-\caption{Accuracy as a function of the number of the user's own labelled clips.}
-\label{fig:pers}
-\end{figure}
-\noindent Twelve short recordings (two per emotion) raise emotion accuracy by \textbf{11
-points to 82\%} and sentiment accuracy to \textbf{90\%}. Beyond that, the gain levels off.
-
-\section{Summary of results}
-\begin{table}[H]
-\centering
-\caption{Progression of the system (emotion accuracy on speakers not seen in training).}
+\caption{Region classifier (multi-proposal decision) accuracy.}
+\label{tab:region}
 \begin{tabular}{lcc}
 \toprule
-System & Same corpus (CREMA-D) & New corpus (RAVDESS)\\
+Classifier & Validation & Test\\
 \midrule
-Hand-crafted features + SVM & 0.524 & --\\
-WavLM + Logistic Regression & 0.689 & 0.457\\
-+ multi-corpus training & 0.693 & 0.705\\
-+ 12 own clips (personalised) & -- & \textbf{0.824}\\
+SVM (RBF, $C=10$, $\gamma=10^{-4}$) & \best{0.996} & \best{0.973}\\
+Naive Bayes & 0.969 & 0.969\\
+Logistic Regression ($C=0.01$) & 0.987 & 0.964\\
+Neural Network (256, 64) & 0.991 & 0.973\\
 \bottomrule
 \end{tabular}
 \end{table}
 
-% ============================================================ innovation
-\chapter{Innovation: Interactive Application with Personalisation}
-\label{ch:app}
-The final model is delivered as a web application (\texttt{streamlit run app.py}). It
-covers the whole path from a person speaking into a microphone to an explained prediction.
+\section{Final system}
+The multi-proposal SVM had the highest validation accuracy of all models (0.996), so it was
+selected as the final model for both tasks. An independent re-run of the saved model on the
+original test image files (\texttt{q3/verify\_test.py}) reproduces the result:
+\begin{table}[H]
+\centering
+\caption{Final model on the 225 test images (accuracy 97.33\%).}
+\label{tab:final}
+\begin{tabular}{lcccc}
+\toprule
+Class & Precision & Recall & F1 & Images\\
+\midrule
+Paper (no defect) & 0.963 & \best{1.000} & 0.981 & 77\\
+Hole & 0.986 & 0.932 & 0.958 & 73\\
+Pen mark & 0.974 & 0.987 & 0.980 & 75\\
+\midrule
+\textbf{Overall} & 0.974 & 0.973 & 0.973 & 225\\
+\bottomrule
+\end{tabular}
+\end{table}
+\noindent There are no false alarms on clean paper (77/77). 74 of 75 pen marks and 68 of 73
+holes are recognised. The single-candidate classifiers of Table~\ref{tab:res} are slightly
+better on test (up to 99.1\%). The difference of four images is within the noise of a
+225-image test set, and we report the validation-selected model to keep the protocol honest.
 
-\section{Features}
+\section{Localisation results}
+No ground-truth boxes are provided, so localisation was evaluated in two ways:
 \begin{itemize}
-  \item \textbf{Live microphone input.} The user records a sentence in the browser; uploads,
-        CREMA-D test clips and RAVDESS clips are also available, the latter two with their
-        true label shown for comparison.
-  \item \textbf{Sentiment and emotion.} The prediction is shown as a colour-coded sentiment
-        (positive, neutral, negative) and an emotion, each with its probability distribution
-        and a low-confidence notice when no emotion clearly dominates.
-  \item \textbf{What the filter removed.} The spectrogram of the input is shown before and
-        after the 4\,kHz low-pass filter.
-  \item \textbf{Input-quality checks.} Recordings that are too short, too long, too quiet or
-        clipped trigger a warning. These are the most common reasons for wrong predictions
-        on home recordings.
-  \item \textbf{Feedback and few-shot personalisation.} After each prediction the user can
-        state the emotion they actually expressed and add the clip as an example. A progress
-        table shows how many examples exist per emotion, and \emph{Personalise} retrains the
-        classifier on the corpus plus the user's examples in a few seconds
-        (Section~\ref{sec:pers}). The user can switch between the base and personalised
-        models and compare them in a session history.
+  \item \textbf{Consistency.} For 146 of the 148 defective test images, the chosen candidate
+        is also the darkest region of the image. In the other two, the region classifier
+        correctly passed over a static blemish.
+  \item \textbf{Visual inspection} of zoomed crops (Figure~\ref{fig:loc}) and of all
+        misclassified images (Figure~\ref{fig:err}). In every inspected case the box lies
+        tightly on the real hole or pen mark, including the six images whose class was
+        wrong. Pen-mark boxes cover the whole stroke, because the morphological closing
+        merges its fragments.
 \end{itemize}
 
-\section{Why this is innovative}
-Most student emotion-recognition projects stop at an accuracy number on a random split of a
-single dataset. This project (i) evaluates on unseen speakers \emph{and} an unseen corpus,
-(ii) identifies domain shift as the reason a model fails on real users, and (iii) gives the
-user a practical, measured way to fix it, few-shot personalisation, with immediate visual
-feedback. The application turns the model into a tool that a non-expert can test, understand
-and adapt to their own voice.
+\begin{figure}[H]
+\centering
+\includegraphics[width=\textwidth]{q3_localization_zoom.png}
+\caption{Detected bounding boxes on 24 random defective test images (zoomed; titles show the
+true class and the prediction).}
+\label{fig:loc}
+\end{figure}
+\begin{figure}[H]
+\centering
+\includegraphics[width=\textwidth]{q3_errors.png}
+\caption{All misclassified test images. Each box is still on the defect; the errors are faint
+holes predicted as paper and elongated holes resembling pen strokes.}
+\label{fig:err}
+\end{figure}
 
-% PLACE APP SCREENSHOTS HERE (optional), e.g.
+% ============================================================ innovation
+\chapter{Innovation: Interactive Inspection Application}
+\label{ch:app}
+The trained models are delivered as a web application (\texttt{streamlit run app.py}) that
+a quality-control operator could use directly.
+\begin{itemize}
+  \item \textbf{Single-image inspection.} Upload a photo, or pick or randomly draw a test
+        image. The app shows the class with its confidence, the probability of each class,
+        the full image with the bounding box, the box coordinates in pixels and a zoom on
+        the defect. For test images, the true class is shown for comparison.
+  \item \textbf{Explanation: how the model sees the image.} An expandable panel shows the
+        illumination-flattened z-map with all five candidate regions. For each candidate it
+        lists the darkness score, the size and the region classifier's probabilities, and
+        the chosen defect is highlighted. This makes it clear why a faint speck or lens
+        blemish is rejected while the real defect is accepted.
+  \item \textbf{Batch inspection.} Many images can be uploaded at once, as on a production
+        line. The app reports the number of images, the number of defective ones and the
+        defect rate, and the results table (class, confidence and box per image) can be
+        downloaded as CSV.
+\end{itemize}
+\noindent Methodologically, the main innovation is the \textbf{proposal-based classical
+detector with hard negatives}. Instead of describing the whole image, the pipeline isolates
+candidate objects (illumination flattening, robust z-score, morphology) and learns to reject
+static lens blemishes, and a single classifier performs both classification and localisation.
+
+% APP SCREENSHOTS (optional): add with
 % \begin{figure}[H]\centering\includegraphics[width=\textwidth]{app_screenshot.png}
-% \caption{The application.}\end{figure}
+% \caption{The inspection application.}\end{figure}
 
 % ================================================================ software
 \chapter{Software Design and Usage}
-\section{Structure}
 \begin{lstlisting}
 ml_cep/
-  app.py                     interactive application
-  q2/audio_features.py       low-pass filter + 242 hand-crafted features
-  q2/q2_audio_sentiment.py   split, baseline classifiers, ablation, cut-off study
-  q2/ssl_features.py         WavLM embedding extraction
-  q2/q2_wavlm_emotion.py     layer choice, 5 classifiers, RAVDESS, multi-corpus, final model
-  q2/personalization.py      few-shot personalisation (experiment + function used by app)
-  q2/predict.py              command-line prediction for WAV files
-  q2/models/                 trained models (+ corpus features for personalisation)
-  q2/results/                all tables and figures
-  report/                    this report
+  app.py                       interactive inspection application
+  q3/defect_features.py        pre-processing, candidates, all features
+  q3/q3_defect_detection.py    split, augmentation, 4 classifiers x 3 feature sets,
+                               region classifier, localisation, figures, models
+  q3/predict.py                command-line prediction + annotated images
+  q3/verify_test.py            independent re-check of the final model on test images
+  q3/error_analysis.py         figure of all misclassified test images
+  q3/models/                   trained models
+  q3/results/                  all tables and figures
+  report/                      this report
 \end{lstlisting}
-\section{How to run}
 \begin{lstlisting}
 pip install -r requirements.txt
-git clone https://github.com/naweedfatima03/SentimentAnalysisDataset q2/dataset_repo
-# RAVDESS speech: zenodo.org/records/1188976 -> extract to q2/ravdess/
-python q2/q2_audio_sentiment.py        # split + baseline
-python q2/ssl_features.py ...          # (called per shard, see README)
-python q2/q2_wavlm_emotion.py          # main model
-python q2/personalization.py           # personalisation experiment
-python q2/predict.py my_voice.wav      # predict a file
-streamlit run app.py                   # application
+# images: Google Drive folder from the handout -> q3/data/out/{paper,hole,penMark}/
+python q3/q3_defect_detection.py      # full pipeline (~20 min on 12 cores)
+python q3/verify_test.py              # final test accuracy from the saved model
+python q3/predict.py image.jpg        # annotated image -> q3/predictions/
+streamlit run app.py                  # application
 \end{lstlisting}
-The trained models are included in the repository, so \texttt{predict.py} and the
-application work right after cloning. WavLM itself (about 380\,MB) is downloaded
-automatically on first use. Random seeds are fixed (42), and features are cached so that
-every result in this report can be regenerated.
+Random seeds are fixed (42), and features are cached, so every number in this report can be
+regenerated. The trained models are included in the repository.
 
 % ==================================================================== team
 \chapter{Team Contribution}
@@ -589,20 +468,17 @@ every result in this report can be regenerated.
 \hline
 \textbf{Member} & \textbf{Main responsibilities}\\ \hline
 \textbf{Sumayyah Mohammedy} (SE-23013) &
-Literature review of speech emotion recognition and self-supervised speech models; dataset
-analysis, speaker-independent split and sentiment mapping; compilation and editing of the
-LaTeX report.\\ \hline
+Literature review of surface-inspection features; dataset analysis and split; compilation
+and editing of the LaTeX report.\\ \hline
 \textbf{Amna Khan} (SE-23039) &
-Pre-processing (low-pass filter design, silence trimming, normalisation) and the cut-off
-study; the 242 hand-crafted features including bicoherence; baseline classifiers and
-feature-group ablation.\\ \hline
+Pre-processing: illumination flattening, robust z-score map, candidate proposals and their
+calibration; data augmentation.\\ \hline
 \textbf{Mariha Mahmood} (SE-23047) &
-WavLM embedding extraction, layer-wise analysis, tuning and evaluation of the five
-classifiers on WavLM features, sentiment evaluation with balanced metrics, confusion and
-error analysis.\\ \hline
+Feature extraction (colour histogram, spatial binning, HOG, LBP, GLCM, shape and Hu
+moments); tuning and evaluation of the four classifiers on the three feature sets.\\ \hline
 \textbf{Haris Bin Nasir} (SE-23084) &
-RAVDESS cross-corpus test, multi-corpus training, few-shot personalisation (method and
-experiment), the Streamlit application, command-line tools and GitHub repository.\\ \hline
+Region classifier with hard negatives and bounding-box localisation; error analysis and
+independent test verification; the Streamlit application and GitHub repository.\\ \hline
 \end{tabularx}
 \end{table}
 \begin{table}[H]
@@ -612,10 +488,10 @@ experiment), the Streamlit application, command-line tools and GitHub repository
 \toprule
 Task & Sumayyah & Amna & Mariha & Haris\\
 \midrule
-Literature review, data and split & L & S & & \\
-Filtering and hand-crafted features & & L & S & \\
-WavLM features and classifiers & & S & L & \\
-Cross-corpus and personalisation & & & S & L\\
+Literature review, data analysis, split & L & S & & \\
+Pre-processing and candidates & & L & S & \\
+Features and classifiers & & S & L & \\
+Localisation and error analysis & & & S & L\\
 Application and repository & S & & & L\\
 Report & L & S & S & S\\
 \bottomrule
@@ -624,39 +500,31 @@ Report & L & S & S & S\\
 
 % ============================================================== conclusion
 \chapter{Conclusion}
-We built a speech emotion and sentiment recogniser that meets all requirements of the CEP:
-data selection with a speaker-independent split, low-pass de-noising, literature-based
-features, and the five required classifiers. Hand-crafted features give 52.4\% six-emotion
-accuracy on unseen speakers. Frozen WavLM features with Logistic Regression give
-\textbf{68.9\%}, and sentiment is recognised with \textbf{86.4\%} accuracy.
+We built a complete classical machine-vision pipeline for paper surface inspection. It
+fulfils all CEP requirements: the suggested features plus features from the literature,
+optional data augmentation, and four classifiers for two tasks. Flattening the illumination
+and isolating candidate regions turns a hard problem (defects below 0.01\% of the image)
+into an easy one: every classifier exceeds 94\% test accuracy and the best reaches
+\textbf{99.1\%}. The final validation-selected system reaches \textbf{97.3\%} with no false
+alarms, and localises the defect correctly in every inspected image.
 
-Cross-corpus testing showed that the main obstacle in practice is domain shift. Multi-corpus
-training (70.5\% on unseen RAVDESS actors, up from 51.4\%) and few-shot personalisation
-(82\% emotion and 90\% sentiment accuracy with 12 of the user's own clips) address it. The
-interactive application makes both the predictions and the personalisation available to
-any user.
-
-\paragraph{Limitations.} Both corpora contain acted English speech, and spontaneous
-real-life emotions are subtler. Six-way emotion classification remains ambiguous even for
-human listeners (CREMA-D raters agree with the intended emotion in only about 64\% of
-audio-only cases \cite{cremad}).
-
-\paragraph{Future work.} Fine-tuning WavLM end to end, larger models (WavLM-large), more
-corpora (IEMOCAP, MSP-Podcast) and data augmentation with real room and microphone responses.
+\paragraph{Limitations and future work.} The method assumes one dominant dark defect per image
+and dark defects on light paper. Bright defects such as back-lit tears would need a
+symmetric threshold. A quantitative IoU evaluation would require manually annotated boxes,
+and very faint holes remain the main error source; higher-resolution processing around
+candidates or a small CNN on the candidate patches could reduce these errors.
 
 % ============================================================ references
 \begin{thebibliography}{99}
 \bibitem{sklearn} F.~Pedregosa \emph{et al.}, ``Scikit-learn: Machine learning in Python,'' \emph{JMLR}, vol.~12, pp.~2825--2830, 2011.
-\bibitem{librosa} B.~McFee \emph{et al.}, ``librosa: Audio and music signal analysis in Python,'' in \emph{Proc. SciPy}, 2015.
-\bibitem{cremad} H.~Cao, D.~G. Cooper, M.~K. Keutmann, R.~C. Gur, A.~Nenkova, R.~Verma, ``CREMA-D: Crowd-sourced emotional multimodal actors dataset,'' \emph{IEEE Trans. Affective Computing}, vol.~5, no.~4, pp.~377--390, 2014.
-\bibitem{ravdess} S.~R. Livingstone, F.~A. Russo, ``The Ryerson Audio-Visual Database of Emotional Speech and Song (RAVDESS),'' \emph{PLoS ONE}, 13(5):e0196391, 2018.
-\bibitem{rabiner} L.~Rabiner, R.~Schafer, \emph{Theory and Applications of Digital Speech Processing}, Pearson, 2010.
-\bibitem{elayadi} M.~El~Ayadi, M.~S. Kamel, F.~Karray, ``Survey on speech emotion recognition: Features, classification schemes, and databases,'' \emph{Pattern Recognition}, vol.~44, no.~3, pp.~572--587, 2011.
-\bibitem{schuller} B.~Schuller, ``Speech emotion recognition: Two decades in a nutshell, benchmarks, and ongoing trends,'' \emph{Commun. ACM}, vol.~61, no.~5, pp.~90--99, 2018.
-\bibitem{albadawy} E.~A. AlBadawy, S.~Lyu, H.~Farid, ``Detecting AI-synthesized speech using bispectral analysis,'' in \emph{Proc. CVPR Workshops}, 2019.
-\bibitem{wav2vec2} A.~Baevski, H.~Zhou, A.~Mohamed, M.~Auli, ``wav2vec 2.0: A framework for self-supervised learning of speech representations,'' in \emph{Proc. NeurIPS}, 2020.
-\bibitem{wavlm} S.~Chen \emph{et al.}, ``WavLM: Large-scale self-supervised pre-training for full stack speech processing,'' \emph{IEEE J. Sel. Topics Signal Process.}, vol.~16, no.~6, pp.~1505--1518, 2022.
-\bibitem{superb} S.-W. Yang \emph{et al.}, ``SUPERB: Speech processing Universal PERformance Benchmark,'' in \emph{Proc. Interspeech}, 2021.
+\bibitem{skimage} S.~van der Walt \emph{et al.}, ``scikit-image: image processing in Python,'' \emph{PeerJ}, 2:e453, 2014.
+\bibitem{xie} X.~Xie, ``A review of recent advances in surface defect detection using texture analysis techniques,'' \emph{Electronic Letters on Computer Vision and Image Analysis}, vol.~7, no.~3, pp.~1--22, 2008.
+\bibitem{neogi} N.~Neogi, D.~K. Mohanta, P.~K. Dutta, ``Review of vision-based steel surface inspection systems,'' \emph{EURASIP J. Image and Video Processing}, 2014:50, 2014.
+\bibitem{udacity} Udacity Self-Driving Car Nanodegree, ``Vehicle detection: colour histograms, spatial binning and HOG features,'' course material, 2017.
+\bibitem{hog} N.~Dalal, B.~Triggs, ``Histograms of oriented gradients for human detection,'' in \emph{Proc. CVPR}, 2005.
+\bibitem{lbp} T.~Ojala, M.~Pietik\"ainen, T.~M\"aenp\"a\"a, ``Multiresolution gray-scale and rotation invariant texture classification with local binary patterns,'' \emph{IEEE TPAMI}, vol.~24, no.~7, pp.~971--987, 2002.
+\bibitem{haralick} R.~M. Haralick, K.~Shanmugam, I.~Dinstein, ``Textural features for image classification,'' \emph{IEEE Trans. SMC}, vol.~3, no.~6, pp.~610--621, 1973.
+\bibitem{hu} M.-K. Hu, ``Visual pattern recognition by moment invariants,'' \emph{IRE Trans. Information Theory}, vol.~8, no.~2, pp.~179--187, 1962.
 \end{thebibliography}
 
 % ============================================================== appendix
@@ -669,13 +537,23 @@ corpora (IEMOCAP, MSP-Podcast) and data augmentation with real room and micropho
 \toprule
 Requirement & Where\\
 \midrule
-Select audio files; create training, validation and test sets & Ch.~2, Table~\ref{tab:split}\\
-Remove noise using low-pass filtering & Ch.~3, Fig.~\ref{fig:lowpass}\\
-Literature review and features (FFT, MFCC, mel, chroma, bicoherence, centroid, bandwidth, contrast) & Ch.~4, Table~\ref{tab:feat}\\
-KNN, Logistic Regression, Naive Bayes, SVM, Neural Network & Ch.~5--6, Tables~\ref{tab:base},~\ref{tab:wavlm}\\
-Project report, code, ease of use & this report, \repo, Ch.~\ref{ch:app}\\
+Colour histogram, spatial binning, HOG & Ch.~4, Table~\ref{tab:feat}\\
+Literature review and further features & Ch.~4 (LBP, GLCM, shape, Hu moments)\\
+Data augmentation (optional) & Section~4.3\\
+SVM, Naive Bayes, Logistic Regression, Neural Network & Ch.~5, Table~\ref{tab:res}\\
+(i) Three-class classification & Ch.~5, Table~\ref{tab:final}\\
+(ii) Defect localisation with bounding boxes & Ch.~6, Fig.~\ref{fig:loc}\\
+Report, code, ease of use & this report, \repo, Ch.~\ref{ch:app}\\
 \bottomrule
 \end{tabularx}
 \end{table}
+
+\chapter{Hyper-parameter Grids}
+\begin{lstlisting}
+SVM (RBF)            C {0.3, 1, 3, 10, 30} x gamma {scale, 1e-4, 3e-4}
+Naive Bayes          var_smoothing {1e-9, 1e-6, 1e-3, 1e-2, 1e-1}
+Logistic Regression  C {0.001, 0.01, 0.1, 1}
+Neural Network       hidden {(128), (256), (256, 64)} x alpha {1e-3, 1e-2, 1e-1, 1}
+\end{lstlisting}
 
 \end{document}

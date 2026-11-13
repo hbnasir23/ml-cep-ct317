@@ -1,3 +1,0 @@
-6-emotion chance: 0.167
-sentiment majority baseline accuracy: 0.6829
-sentiment majority baseline balanced accuracy: 0.3333
