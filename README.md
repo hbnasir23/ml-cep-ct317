@@ -24,6 +24,10 @@ image -> illumination flattening (robust z-score map) -> dark-region candidates
 
 ## Try it
 
+**Deploy online (1 click):** [share.streamlit.io/deploy](https://share.streamlit.io/deploy?repository=hbnasir23/ml-cep-ct317&branch=main&mainModule=app.py). The online app ships 24 sample test images in `q3/samples/`.
+
+Locally:
+
 ```bash
 pip install -r requirements.txt
 streamlit run app.py
